@@ -1,0 +1,23 @@
+# 个人收支流水经营分析与风险管控决策看板 v01
+
+本项目基于脱敏个人收支流水数据，模拟企业经营支出管理场景，构建从支出结构诊断、预算偏差识别、规则命中分析到可执行行动清单的互动决策看板。
+
+## 运行方式
+
+```bash
+python -m pip install -r requirements.txt
+python -m streamlit run app.py
+```
+
+## 数据文件
+
+- `data/cashflow_risk_result_v02.csv`：完整规则识别结果
+- `data/cashflow_focus_transactions_v02.csv`：重点关注交易明细
+
+## 核心能力
+
+- 经营支出结构诊断
+- 预算外风险识别
+- 高频小额、续费管理、单笔大额等规则识别
+- 重点交易与问题类型行动清单
+- CSV 下载与复盘闭环

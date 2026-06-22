@@ -124,10 +124,6 @@ if len(selected_rule_cols) < len(RULES):
     else:
         filtered = filtered.iloc[0:0].copy()
 
-# 重点关注交易口径：与 SQL 风险识别和作品集保持一致，只统计 risk_level = “重点关注”的 45 笔高优先级交易。
-# 规则命中总数仍可在规则排行中查看，二者不是同一个口径。
-focus_df = filtered[filtered["risk_level"].eq("重点关注")].copy()
-
 # ---------------- Computations ----------------
 def money(v):
     try:
@@ -143,6 +139,29 @@ def money(v):
 def pct(part, total):
     return 0 if total == 0 else part / total * 100
 
+# 行动优先级分：先在 filtered 上生成，再派生 focus_df，避免筛选后重点交易表缺少该字段。
+def add_action_priority_score(df):
+    df = df.copy()
+    if df.empty:
+        df["action_priority_score"] = pd.Series(dtype="float")
+        return df
+    max_amt = max(float(df["net_amount"].max()), 1)
+    df["action_priority_score"] = (
+        df["rule_hit_count"] * 22
+        + df.get("rule_budget_out_risk", 0) * 18
+        + df.get("rule_large_amount", 0) * 18
+        + df.get("rule_renewal_management", 0) * 16
+        + df.get("rule_small_high_freq", 0) * 12
+        + df["net_amount"] / max_amt * 14
+    ).round(1)
+    return df
+
+filtered = add_action_priority_score(filtered)
+
+# 重点关注交易口径：与 SQL 风险识别和作品集保持一致，只统计 risk_level = “重点关注”的 45 笔高优先级交易。
+# 规则命中总数仍可在规则排行中查看，二者不是同一个口径。
+focus_df = filtered[filtered["risk_level"].eq("重点关注")].copy()
+
 spend_total = filtered["net_amount"].sum()
 tx_count = len(filtered)
 focus_count = len(focus_df)
@@ -154,7 +173,12 @@ renewal_count = int(filtered["rule_renewal_management"].sum()) if "rule_renewal_
 large_count = int(filtered["rule_large_amount"].sum()) if "rule_large_amount" in filtered else 0
 
 cat_sum = filtered.groupby("category", as_index=False)["net_amount"].sum().sort_values("net_amount", ascending=False)
-scene_sum = filtered.groupby("scene_l2", as_index=False).agg(spend=("net_amount","sum"), count=("transaction_id","count"), focus=("rule_hit_count", lambda s: int((s>0).sum()))).sort_values("spend", ascending=False)
+scene_sum = filtered.groupby("scene_l2", as_index=False).agg(
+    spend=("net_amount", "sum"),
+    count=("transaction_id", "count"),
+    rule_hit_tx=("rule_hit_count", lambda s: int((s > 0).sum())),
+    focus=("risk_level", lambda s: int(s.eq("重点关注").sum())),
+).sort_values("spend", ascending=False)
 rule_summary = pd.DataFrame([
     {"规则": label, "命中笔数": int(filtered[col].sum()) if col in filtered else 0, "相关金额": filtered.loc[filtered[col].eq(1), "net_amount"].sum() if col in filtered else 0}
     for col, label in RULES.items()
@@ -166,20 +190,6 @@ top_cat = cat_sum.iloc[0]["category"] if not cat_sum.empty else "暂无"
 top_cat_amt = cat_sum.iloc[0]["net_amount"] if not cat_sum.empty else 0
 top_rule = rule_summary.iloc[0]["规则"] if not rule_summary.empty and rule_summary.iloc[0]["命中笔数"] > 0 else "暂无明显规则"
 top_focus_scene = focus_scene.iloc[0]["scene_l2"] if not focus_scene.empty else "暂无"
-
-# focus score
-if not filtered.empty:
-    max_amt = max(filtered["net_amount"].max(), 1)
-    filtered["action_priority_score"] = (
-        filtered["rule_hit_count"] * 22
-        + filtered.get("rule_budget_out_risk", 0) * 18
-        + filtered.get("rule_large_amount", 0) * 18
-        + filtered.get("rule_renewal_management", 0) * 16
-        + filtered.get("rule_small_high_freq", 0) * 12
-        + filtered["net_amount"] / max_amt * 14
-    ).round(1)
-else:
-    filtered["action_priority_score"] = []
 
 # ---------------- Header ----------------
 st.markdown(f"""
@@ -319,7 +329,10 @@ st.plotly_chart(fig_week, use_container_width=True)
 st.markdown('<div class="section-title">三、重点交易跟进池与行动建议</div>', unsafe_allow_html=True)
 st.markdown('<div class="section-desc">回答：哪些交易需要优先复盘？每笔交易为什么被关注？下一步该如何处理？</div>', unsafe_allow_html=True)
 
-focus_display = focus_df.copy().sort_values("action_priority_score", ascending=False)
+focus_display = focus_df.copy()
+if "action_priority_score" not in focus_display.columns:
+    focus_display = add_action_priority_score(focus_display)
+focus_display = focus_display.sort_values("action_priority_score", ascending=False)
 if focus_display.empty:
     st.info("当前筛选范围暂无重点关注交易。")
 else:
